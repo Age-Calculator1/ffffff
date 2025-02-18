@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ar">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>متصفح الملفات الشامل</title>
+    <script src="https://unpkg.com/fflate"></script>
+    <style>
+        body { font-family: Arial, sans-serif; direction: rtl; text-align: right; margin: 20px; }
+        #header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
+        #backButton { padding: 5px 10px; font-size: 14px; background-color: #007bff; color: white; border: none; border-radius: 5px; cursor: pointer; }
+        #backButton:disabled { background-color: #ccc; cursor: not-allowed; }
+        ul { list-style-type: none; padding: 0; }
+        li { padding: 10px; border: 1px solid #ddd; margin-bottom: 5px; cursor: pointer; border-radius: 5px; background-color: #f9f9f9; }
+        li:hover { background-color: #f1f1f1; }
+        .folder { font-weight: bold; color: #0056b3; }
+        .file { color: #333; }
+        #fileViewer { margin-top: 20px; padding: 10px; border: 1px solid #ddd; border-radius: 5px; background-color: #f9f9f9; overflow: auto; max-height: 400px; }
+        img, video, audio, iframe { max-width: 100%; height: auto; display: block; margin: 10px auto; }
+        pre { background: #f4f4f4; padding: 10px; border-radius: 5px; overflow-x: auto; }
+        a.download-link { display: block; margin-top: 10px; text-align: center; padding: 10px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+        a.download-link:hover { background: #0056b3; }
+    </style>
+</head>
+<body>
+    <div id="header">
+        <h2>متصفح الملفات الشامل</h2>
+        <button id="backButton" disabled>رجوع</button>
+    </div>
+    <ul id="fileList"></ul>
+    <div id="fileViewer"></div>
+
+    <script>
+        const backButton = document.getElementById("backButton");
+        const fileList = document.getElementById("fileList");
+        const fileViewer = document.getElementById("fileViewer");
+
+        let currentPath = [];
+        let fileTree = {};
+        let fileContent = {};
+
+        fetch("ft.zip")
+            .then(response => response.blob())
+            .then(blob => {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const uint8Array = new Uint8Array(e.target.result);
+                    fflate.unzip(uint8Array, (err, files) => {
+                        if (err) {
+                            fileViewer.textContent = "❌ خطأ في فك الضغط!";
+                            return;
+                        }
+                        fileContent = files;
+                        fileTree = buildFileTree(Object.keys(files));
+                        renderFileTree(fileTree, fileList);
+                    });
+                };
+                reader.readAsArrayBuffer(blob);
+            })
+            .catch(error => {
+                fileViewer.textContent = "❌ لم يتم العثور على ملف ft.zip!";
+            });
+
+        function buildFileTree(filePaths) {
+            const root = {};
+            filePaths.forEach(path => {
+                const parts = path.split("/");
+                let current = root;
+                parts.forEach((part, index) => {
+                    if (!current[part]) {
+                        current[part] = index === parts.length - 1 ? null : {};
+                    }
+                    current = current[part];
+                });
+            });
+            return root;
+        }
+
+        function renderFileTree(tree, parentElement) {
+            parentElement.innerHTML = "";
+            for (const name in tree) {
+                const li = document.createElement("li");
+                li.textContent = name;
+
+                if (tree[name] === null) {
+                    li.classList.add("file");
+                    li.addEventListener("click", () => openFile([...currentPath, name].join("/")));
+                } else {
+                    li.classList.add("folder");
+                    li.addEventListener("click", () => {
+                        currentPath.push(name);
+                        renderFileTree(tree[name], parentElement);
+                        backButton.disabled = false;
+                    });
+                }
+                parentElement.appendChild(li);
+            }
+        }
+
+        function openFile(path) {
+            const file = fileContent[path];
+            fileViewer.innerHTML = "";
+
+            if (!file) {
+                fileViewer.textContent = "❌ لا يمكن عرض هذا الملف.";
+                return;
+            }
+
+            const blob = new Blob([file]);
+            const fileType = path.split(".").pop().toLowerCase();
+
+            if (["png", "jpg", "jpeg", "gif", "bmp", "svg", "webp"].includes(fileType)) {
+                const img = document.createElement("img");
+                img.src = URL.createObjectURL(blob);
+                fileViewer.appendChild(img);
+            } else if (["mp4", "webm", "avi", "mov"].includes(fileType)) {
+                const video = document.createElement("video");
+                video.controls = true;
+                video.src = URL.createObjectURL(blob);
+                fileViewer.appendChild(video);
+            } else if (["mp3", "wav", "ogg"].includes(fileType)) {
+                const audio = document.createElement("audio");
+                audio.controls = true;
+                audio.src = URL.createObjectURL(blob);
+                fileViewer.appendChild(audio);
+            } else if (fileType === "pdf") {
+                const iframe = document.createElement("iframe");
+                iframe.src = URL.createObjectURL(blob);
+                fileViewer.appendChild(iframe);
+            } else if (fileType === "zip") {
+                fflate.unzip(new Uint8Array(file), (err, files) => {
+                    if (err) {
+                        fileViewer.textContent = "❌ خطأ في فك الضغط!";
+                        return;
+                    }
+                    fileContent = { ...fileContent, ...files };
+                    fileTree = buildFileTree(Object.keys(fileContent));
+                    renderFileTree(fileTree, fileList);
+                });
+            } else {
+                const reader = new FileReader();
+                reader.onload = function (e) {
+                    const content = e.target.result;
+                    if (/[\x00-\x08\x0E-\x1F]/.test(content)) {
+                        const hexView = document.createElement("pre");
+                        hexView.textContent = [...new Uint8Array(file)].map(b => b.toString(16).padStart(2, "0")).join(" ");
+                        fileViewer.appendChild(hexView);
+                    } else {
+                        const pre = document.createElement("pre");
+                        pre.textContent = content;
+                        fileViewer.appendChild(pre);
+                    }
+                };
+                reader.readAsText(blob);
+            }
+
+            const downloadLink = document.createElement("a");
+            downloadLink.href = URL.createObjectURL(blob);
+            downloadLink.download = path.split("/").pop();
+            downloadLink.textContent = "⬇ تحميل الملف";
+            downloadLink.classList.add("download-link");
+            fileViewer.appendChild(downloadLink);
+        }
+
+        backButton.addEventListener("click", () => {
+            currentPath.pop();
+            let currentFolder = fileTree;
+            currentPath.forEach(part => { currentFolder = currentFolder[part]; });
+            renderFileTree(currentFolder, fileList);
+            if (currentPath.length === 0) backButton.disabled = true;
+        });
+    </script>
+</body>
+</html>
